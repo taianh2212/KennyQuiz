@@ -41,30 +41,36 @@ function App() {
   useEffect(() => {
     if (!SUPABASE_ENABLED) {
       setDbStatus('offline')
-      setDbMessage('Chưa có API key Supabase — dùng localStorage')
+      setDbMessage('Chưa có API key Supabase trong .env')
       return
     }
 
     const init = async () => {
       setDbStatus('loading')
-      const ok = await checkSupabaseConnection()
-      if (!ok) {
-        setDbStatus('offline')
-        setDbMessage('Không kết nối được Supabase — dùng localStorage')
-        return
-      }
-
       try {
+        const ok = await checkSupabaseConnection()
+        if (!ok) {
+          setDbStatus('error')
+          setDbMessage('Lỗi kết nối database (kiểm tra SQL Schema)')
+          return
+        }
+
         const data = await fetchProjects()
-        setProjects(data)
-        setLocalProjects(data) // sync cache
-        setDbStatus('synced')
-        setDbMessage(`Đã đồng bộ ${data.length} dự án`)
+        
+        // Logic: Ưu tiên dữ liệu từ Cloud, nếu Cloud trống thì vẫn giữ dữ liệu máy
+        if (data.length > 0) {
+          setProjects(data)
+          setLocalProjects(data)
+          setDbStatus('synced')
+          setDbMessage(`Đã tải ${data.length} dự án từ Cloud`)
+        } else {
+          setDbStatus('synced')
+          setDbMessage('Cloud trống - Sẵn sàng lưu dự án mới')
+        }
       } catch (err) {
+        console.error('Supabase Init Error:', err)
         setDbStatus('error')
-        setDbMessage('Lỗi tải dữ liệu: ' + err.message)
-        // fallback to localStorage
-        setProjects(localProjects)
+        setDbMessage('Lỗi: ' + err.message)
       }
     }
 
@@ -79,70 +85,71 @@ function App() {
 
   // ── CRUD helpers ─────────────────────────────────────────────────────────
   const addProject = useCallback(async (project) => {
-    if (SUPABASE_ENABLED && dbStatus !== 'offline') {
-      setDbStatus('loading')
+    setDbStatus('loading')
+    let savedProject = null
+
+    if (SUPABASE_ENABLED && dbStatus !== 'offline' && dbStatus !== 'error') {
       try {
-        const saved = await sbCreate(project)
-        setProjects(prev => [saved, ...prev])
-        setLocalProjects(prev => [saved, ...prev])
-        setCurrentProject(saved)
-        setCurrentView('home')
-        setDbStatus('synced')
-        setDbMessage('Đã lưu lên cloud ☁️')
-        return
+        savedProject = await sbCreate(project)
+        console.log('Saved to Supabase:', savedProject)
       } catch (err) {
+        console.error('Save to Supabase failed:', err)
         setDbStatus('error')
-        setDbMessage('Lỗi lưu Supabase, dùng localStorage: ' + err.message)
+        setDbMessage('Lỗi lưu Cloud: ' + err.message)
       }
     }
 
-    // Fallback: localStorage
-    const newProject = {
+    // Luôn lưu local để đề phòng
+    const finalProject = savedProject || {
       ...project,
       id: Date.now().toString(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
-    setProjects(prev => [newProject, ...prev])
-    setLocalProjects(prev => [newProject, ...prev])
-    setCurrentProject(newProject)
+
+    setProjects(prev => [finalProject, ...prev])
+    setLocalProjects(prev => [finalProject, ...prev])
+    setCurrentProject(finalProject)
     setCurrentView('home')
+
+    if (savedProject) {
+      setDbStatus('synced')
+      setDbMessage('Đã lưu lên Cloud thành công!')
+    }
   }, [dbStatus, setLocalProjects])
 
   const updateProject = useCallback(async (updatedProject) => {
-    if (SUPABASE_ENABLED && dbStatus !== 'offline') {
-      setDbStatus('loading')
+    setDbStatus('loading')
+    let saved = null
+
+    if (SUPABASE_ENABLED && dbStatus !== 'offline' && dbStatus !== 'error') {
       try {
-        const saved = await sbUpdate(updatedProject)
-        setProjects(prev => prev.map(p => p.id === saved.id ? saved : p))
-        setLocalProjects(prev => prev.map(p => p.id === saved.id ? saved : p))
-        setCurrentProject(saved)
-        setDbStatus('synced')
-        setDbMessage('Đã cập nhật ☁️')
-        return
+        saved = await sbUpdate(updatedProject)
       } catch (err) {
+        console.error('Update failed:', err)
         setDbStatus('error')
-        setDbMessage('Lỗi cập nhật: ' + err.message)
       }
     }
 
-    // Fallback
-    const updated = { ...updatedProject, updated_at: new Date().toISOString() }
-    setProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
-    setLocalProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
-    setCurrentProject(updated)
+    const final = saved || { ...updatedProject, updated_at: new Date().toISOString() }
+    setProjects(prev => prev.map(p => p.id === final.id ? final : p))
+    setLocalProjects(prev => prev.map(p => p.id === final.id ? final : p))
+    setCurrentProject(final)
+    
+    if (saved) {
+      setDbStatus('synced')
+      setDbMessage('Đã cập nhật Cloud')
+    }
   }, [dbStatus, setLocalProjects])
 
   const deleteProject = useCallback(async (projectId) => {
-    if (SUPABASE_ENABLED && dbStatus !== 'offline') {
+    if (SUPABASE_ENABLED && dbStatus !== 'offline' && dbStatus !== 'error') {
       setDbStatus('loading')
       try {
         await sbDelete(projectId)
         setDbStatus('synced')
-        setDbMessage('Đã xoá ☁️')
       } catch (err) {
         setDbStatus('error')
-        setDbMessage('Lỗi xoá: ' + err.message)
       }
     }
 
@@ -162,7 +169,7 @@ function App() {
   // ── Sync status badge ─────────────────────────────────────────────────────
   const SyncBadge = () => {
     const map = {
-      loading: { icon: <CloudArrowUpIcon className="w-4 h-4 animate-pulse" />, color: 'text-blue-500 bg-blue-50', text: 'Đang đồng bộ...' },
+      loading: { icon: <CloudArrowUpIcon className="w-4 h-4 animate-pulse" />, color: 'text-blue-500 bg-blue-50', text: 'Đang lưu...' },
       synced:  { icon: <CheckCircleIcon  className="w-4 h-4" />,              color: 'text-green-600 bg-green-50', text: 'Cloud ☁️' },
       offline: { icon: <ExclamationTriangleIcon className="w-4 h-4" />,       color: 'text-amber-500 bg-amber-50', text: 'Offline' },
       error:   { icon: <ExclamationTriangleIcon className="w-4 h-4" />,       color: 'text-red-500 bg-red-50',    text: 'Lỗi DB' },
@@ -172,11 +179,12 @@ function App() {
     if (!cfg) return null
     return (
       <div
-        className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${cfg.color} cursor-default`}
+        className={`flex items-center gap-1.5 text-xs font-black uppercase px-3 py-1.5 rounded-xl ${cfg.color} cursor-pointer hover:scale-105 transition-all shadow-sm border border-current opacity-90`}
         title={dbMessage}
+        onClick={() => alert(dbMessage)}
       >
         {cfg.icon}
-        <span>{cfg.text}</span>
+        <span className="hidden sm:inline">{cfg.text}</span>
       </div>
     )
   }
@@ -187,53 +195,37 @@ function App() {
       {showTutorial && <Tutorial onClose={handleCloseTutorial} />}
 
       <div className="container mx-auto px-4 py-6 max-w-5xl">
-        {/* Header */}
         <header className="flex justify-between items-center mb-10">
-          <button
-            onClick={() => navigateTo('home')}
-            className="flex items-center gap-3 group"
-          >
+          <button onClick={() => navigateTo('home')} className="flex items-center gap-3 group">
             <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/25 group-hover:shadow-blue-500/40 group-hover:-translate-y-0.5 transition-all">
               <SparklesIcon className="w-6 h-6 text-white" />
             </div>
             <div className="text-left">
               <h1 className="text-2xl font-black text-gradient leading-none">KennyQuiz</h1>
-              <p className="text-xs text-gray-400 font-medium">AI-powered learning</p>
+              <p className="text-xs text-gray-400 font-medium whitespace-nowrap">AI-powered learning</p>
             </div>
           </button>
 
-          <div className="flex items-center gap-3">
-            {/* Breadcrumb */}
+          <div className="flex items-center gap-2 sm:gap-4">
             {currentView !== 'home' && (
-              <div className="hidden sm:flex items-center gap-2 text-sm text-gray-500">
-                <button onClick={() => navigateTo('home')} className="hover:text-blue-600 transition-colors">
-                  Trang chính
-                </button>
+              <div className="hidden md:flex items-center gap-2 text-xs font-black text-slate-300 uppercase letter tracking-widest">
+                <button onClick={() => navigateTo('home')} className="hover:text-blue-500 transition-colors">TRANG CHỦ</button>
                 <span>/</span>
-                <span className="text-gray-700 font-medium">
-                  {currentView === 'create' && 'Tạo dự án'}
-                  {currentView === 'study'  && 'Học tập'}
-                  {currentView === 'edit'   && 'Chỉnh sửa'}
+                <span className="text-slate-800">
+                  {currentView === 'create' ? 'TẠO DỰ ÁN' : currentView === 'study' ? 'HỌC TẬP' : 'SỬA THẺ'}
                 </span>
               </div>
             )}
-
-            {/* Sync status */}
             <SyncBadge />
-
-            {/* Help */}
             <button
-              id="btn-show-tutorial"
               onClick={() => setShowTutorial(true)}
-              className="p-2.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
-              title="Hướng dẫn"
+              className="p-2.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
             >
               <QuestionMarkCircleIcon className="w-6 h-6" />
             </button>
           </div>
         </header>
 
-        {/* Views */}
         {currentView === 'home' && (
           <Home
             projects={projects}
@@ -268,8 +260,8 @@ function App() {
         )}
       </div>
 
-      <footer className="text-center py-8 text-xs text-gray-400">
-        <p>KennyQuiz • Học thông minh hơn với AI 🤖</p>
+      <footer className="text-center py-8 text-[10px] font-black uppercase text-slate-300 tracking-[0.2em] pointer-events-none">
+        KennyQuiz • SMART AI LEARNING 🤖
       </footer>
     </div>
   )
