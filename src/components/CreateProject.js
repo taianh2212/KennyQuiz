@@ -11,7 +11,7 @@ import {
   ExclamationCircleIcon,
   QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline'
-import { generateCards, isMCQFormat } from '../utils/geminiAPI'
+import { generateCards, isMCQFormat } from '../utils/geminiAPI.js'
 import { parseMCQText } from '../utils/parseMCQ'
 
 const CreateProject = ({ onBack, onSave }) => {
