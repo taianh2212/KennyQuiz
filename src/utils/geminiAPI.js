@@ -90,3 +90,13 @@ ${text}`.trim()
 
   throw new Error(lastError?.message || 'Tất cả models thất bại')
 }
+/** 
+ * Kiểm tra xem văn bản có chứa định dạng trắc nghiệm trần (A/B/C/D) không.
+ */
+export const isMCQFormat = (text) => {
+  const sample = text.substring(0, 1000).split('\n')
+  return sample.some((l) => /^[A-D][.)]\s*/i.test(l.trim()))
+}
+
+// Alias cho CreateProject.js
+export const generateCards = generateFlashcards
