@@ -18,7 +18,7 @@ const shuffleArray = (array) => {
   return arr
 }
 
-const ANSWER_DELAY = 1200 
+const ANSWER_DELAY = 1000 
 
 const StudyMode = ({ project, onBack }) => {
   const [shuffleQuestions, setShuffleQuestions] = useState(true)
@@ -62,6 +62,7 @@ const StudyMode = ({ project, onBack }) => {
   const currentAnswered = currentCard ? answeredMap[currentCard.id] : null
   const correctCount = Object.values(answeredMap).filter(a => a.isCorrect).length
 
+  // -- MAIN ACTION: Answer and move --
   const handleAnswer = (selected) => {
     if (!currentCard || currentAnswered) return
     const isCorrect = selected === currentCard.answer
@@ -70,19 +71,18 @@ const StudyMode = ({ project, onBack }) => {
       [currentCard.id]: { isCorrect, selected }
     }))
 
-    // Auto advance only if correct
-    if (isCorrect) {
-      const tid = setTimeout(() => {
-        if (currentIndex + 1 < cards.length) {
-          setCurrentIndex(prev => prev + 1)
-        } else {
-          setShowFinalResult(true)
-        }
-      }, ANSWER_DELAY)
-      setTimerId(tid)
-    }
+    // ALWAYS move to next question regardless of right/wrong
+    const tid = setTimeout(() => {
+      if (currentIndex + 1 < cards.length) {
+        setCurrentIndex(prev => prev + 1)
+      } else {
+        setShowFinalResult(true)
+      }
+    }, ANSWER_DELAY)
+    setTimerId(tid)
   }
 
+  // -- REDO ACTION: Only if user manually came back to a wrong card --
   const handleRedoCurrent = () => {
     if (!currentCard) return
     if (timerId) clearTimeout(timerId)
@@ -113,17 +113,17 @@ const StudyMode = ({ project, onBack }) => {
       <div className="max-w-2xl mx-auto pb-10 pop-in">
         <div className="card-glass text-center p-8 sm:p-12 border-4 border-white shadow-2xl">
           <div className="text-7xl mb-6"> {score >= 80 ? '🏆' : score >= 50 ? '🥈' : '💪'} </div>
-          <h2 className="text-3xl font-black mb-2 text-slate-800">{score >= 80 ? 'Xuất sắc!' : 'Học nữa học mãi!'}</h2>
+          <h2 className="text-3xl font-black mb-2 text-slate-800">{score >= 80 ? 'Hoàn thành bài tập!' : 'Hãy cố gắng hơn!'}</h2>
           <div className="text-8xl font-black text-gradient mb-4">{score}%</div>
           <p className="text-slate-400 font-bold mb-10 text-lg">Đúng {correctCount} / Tổng {total}</p>
           <div className="space-y-4 max-w-sm mx-auto">
             {total - correctCount > 0 && (
               <button onClick={handleRetryIncorrect} className="btn-primary w-full bg-orange-500 shadow-orange-500/20 py-4 text-lg">
-                <ArrowPathIcon className="w-6 h-6" /> Học lại câu sai
+                <ArrowPathIcon className="w-6 h-6" /> Ôn lại các câu sai
               </button>
             )}
             <button onClick={handleRestart} className="btn-primary w-full py-4 text-lg">
-              <ArrowPathIcon className="w-6 h-6" /> Học lại từ đầu
+              <ArrowPathIcon className="w-6 h-6" /> Làm lại từ đầu
             </button>
             <button onClick={onBack} className="btn-secondary w-full py-4 text-lg">
               <HomeIcon className="w-6 h-6" /> Về trang chính
@@ -142,28 +142,25 @@ const StudyMode = ({ project, onBack }) => {
         <button onClick={onBack} className="flex items-center gap-1.5 text-slate-400 hover:text-slate-600 font-bold text-sm">
           <ArrowLeftIcon className="w-4 h-4" /> Thoát
         </button>
-        <div className="text-[10px] font-black text-slate-300 uppercase letter-widest truncate max-w-[150px]">
-          {project.name}
-        </div>
         <div className="text-xs font-black text-blue-500 uppercase tracking-widest whitespace-nowrap">
-          Đúng: {correctCount}
+          Đúng: {correctCount} / {cards.length}
         </div>
       </div>
 
       <div className="space-y-2">
         <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">
-          <span>Câu {currentIndex + 1} / {cards.length}</span>
+          <span>Câu {currentIndex + 1}</span>
           <span>{Math.round(((currentIndex + 1) / cards.length) * 100)}%</span>
         </div>
-        <div className="h-2.5 bg-white rounded-full overflow-hidden shadow-inner border border-slate-100">
+        <div className="h-2.5 bg-white rounded-full border border-slate-100 shadow-inner overflow-hidden">
           <div 
-            className={`h-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 ease-out`}
+            className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-300"
             style={{ width: `${((currentIndex + 1) / cards.length) * 100}%` }}
           />
         </div>
       </div>
 
-      <div className="card-glass p-6 sm:p-10 slide-in-top border-4 border-white shadow-xl min-h-[400px] flex flex-col">
+      <div className="card-glass p-6 sm:p-10 slide-in-top border-4 border-white shadow-xl min-h-[420px] flex flex-col relative">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-widest mb-6 border border-blue-100 w-fit">
           <SparklesIcon className="w-3 h-3" /> Flashcard 
         </div>
@@ -174,14 +171,14 @@ const StudyMode = ({ project, onBack }) => {
 
         <div className="grid grid-cols-1 gap-3 mt-auto">
           {options.map((option, idx) => {
-            let stateStyle = "bg-slate-50 border-slate-100 text-slate-700 hover:border-blue-300 hover:bg-white active:scale-[0.98]"
+            let stateStyle = "bg-slate-50 border-slate-100 text-slate-700 hover:border-blue-300"
             if (currentAnswered) {
               if (option === currentCard.answer) {
-                stateStyle = "bg-green-50 border-green-500 text-green-700 ring-4 ring-green-100 z-10 scale-[1.02]"
+                stateStyle = "bg-green-50 border-green-500 text-green-700 scale-[1.02] shadow-sm z-10"
               } else if (option === currentAnswered.selected) {
-                stateStyle = "bg-red-50 border-red-500 text-red-700 opacity-80"
+                stateStyle = "bg-red-50 border-red-500 text-red-700"
               } else {
-                stateStyle = "bg-white border-slate-50 text-slate-200 opacity-40"
+                stateStyle = "bg-white border-slate-50 text-slate-200"
               }
             }
 
@@ -201,20 +198,21 @@ const StudyMode = ({ project, onBack }) => {
           })}
         </div>
 
+        {/* Feedback + Redo (Only when answered and no timer running) */}
         {currentAnswered && (
-          <div className={`mt-8 p-5 rounded-2xl flex items-center justify-between sm:justify-start gap-4 animate-in fade-in slide-in-from-bottom-2 ${currentAnswered.isCorrect ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+          <div className={`mt-8 p-5 rounded-2xl flex items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-2 ${currentAnswered.isCorrect ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
             <div className="flex items-center gap-3">
               <div className="text-3xl">{currentAnswered.isCorrect ? '✅' : '❌'}</div>
               <div>
-                <p className="text-lg font-black leading-none">{currentAnswered.isCorrect ? 'Tuyệt lắm!' : 'Sai rồi...'}</p>
-                {!currentAnswered.isCorrect && <p className="text-xs mt-1 font-bold">Hãy xem lại đáp án và thử lại!</p>}
+                <p className="text-lg font-black leading-none">{currentAnswered.isCorrect ? 'Chính xác!' : 'Chưa đúng rồi!'}</p>
+                {!currentAnswered.isCorrect && <p className="text-xs mt-1 font-bold opacity-75">Sửa lại cho đúng nhé!</p>}
               </div>
             </div>
             
             {!currentAnswered.isCorrect && (
               <button 
                 onClick={handleRedoCurrent}
-                className="flex items-center gap-1.5 px-4 py-2 bg-white border-2 border-red-100 rounded-xl text-xs font-black uppercase text-red-500 hover:bg-red-50 transition-all active:scale-90"
+                className="flex items-center gap-1.5 px-4 py-2 bg-white border-2 border-red-100 rounded-xl text-xs font-black uppercase text-red-500 hover:bg-red-50 transition-all shadow-sm"
               >
                 <ArrowUturnLeftIcon className="w-4 h-4" /> Làm lại
               </button>
@@ -231,7 +229,7 @@ const StudyMode = ({ project, onBack }) => {
             <button
               key={idx}
               onClick={() => goToQuestion(idx)}
-              className={`w-8 h-8 rounded-lg text-[10px] font-black transition-all ${isCurrent ? 'bg-blue-600 text-white scale-110 shadow-lg shadow-blue-200 ring-2 ring-blue-100' : ans ? (ans.isCorrect ? 'bg-green-400 text-white' : 'bg-red-400 text-white') : 'bg-white text-slate-300 border border-slate-100 hover:text-blue-500'}`}
+              className={`w-8 h-8 rounded-lg text-[10px] font-black transition-all ${isCurrent ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-100' : ans ? (ans.isCorrect ? 'bg-green-400 text-white' : 'bg-red-400 text-white') : 'bg-white text-slate-300 border border-slate-100 hover:text-blue-500'}`}
             >
               {idx + 1}
             </button>
