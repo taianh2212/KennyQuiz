@@ -36,20 +36,56 @@ function App() {
   const [dbStatus, setDbStatus]   = useState('idle')
   const [dbMessage, setDbMessage] = useState('')
 
-  // ── Manual Refresh Function ──────────────────────────────────────────────
+  // ── Sync Local to Cloud ──────────────────────────────────────────────────
+  const syncLocalToCloud = useCallback(async () => {
+    if (!SUPABASE_ENABLED || projects.length === 0) return
+    
+    setDbStatus('loading')
+    setDbMessage('Đang đẩy dữ liệu lên Cloud...')
+    
+    try {
+      // 1. Lấy dữ liệu mới nhất từ Cloud
+      const cloudData = await fetchProjects()
+      const cloudIds = new Set(cloudData.map(p => p.id))
+      
+      // 2. Tìm những dự án CHỈ có ở local (ID không phải UUID của Supabase)
+      const onlyLocal = projects.filter(p => !cloudIds.has(p.id))
+      
+      if (onlyLocal.length === 0) {
+        setProjects(cloudData)
+        setLocalProjects(cloudData)
+        setDbStatus('synced')
+        setDbMessage('Đã đồng bộ sạch sẽ!')
+        return
+      }
+
+      // 3. Đẩy từng dự án lên
+      for (const lp of onlyLocal) {
+        await sbCreate({ name: lp.name, cards: lp.cards })
+      }
+
+      // 4. Refresh lại toàn bộ
+      const finalData = await fetchProjects()
+      setProjects(finalData)
+      setLocalProjects(finalData)
+      setDbStatus('synced')
+      alert(`Đã đưa thành công ${onlyLocal.length} dự án từ máy lên Cloud!`)
+    } catch (err) {
+      setDbStatus('error')
+      setDbMessage('Lỗi đồng bộ: ' + err.message)
+    }
+  }, [projects, setLocalProjects])
+
   const refreshData = useCallback(async (silent = false) => {
     if (!SUPABASE_ENABLED) return
     if (!silent) setDbStatus('loading')
-    
     try {
       const data = await fetchProjects()
       setProjects(data)
       setLocalProjects(data)
       setDbStatus('synced')
-      setDbMessage(`Đã cập nhật ${data.length} dự án từ Cloud lúc ${new Date().toLocaleTimeString()}`)
     } catch (err) {
       setDbStatus('error')
-      setDbMessage('Lỗi tải dữ liệu: ' + err.message)
     }
   }, [setLocalProjects])
 
@@ -65,7 +101,6 @@ function App() {
         await refreshData(true)
       } else {
         setDbStatus('error')
-        setDbMessage('Không thể kết nối Supabase')
       }
     }
     init()
@@ -95,9 +130,8 @@ function App() {
     }
     setProjects(prev => [finalProject, ...prev])
     setLocalProjects(prev => [finalProject, ...prev])
-    setCurrentProject(finalProject)
-    setCurrentView('home')
     if (savedProject) setDbStatus('synced')
+    setCurrentView('home')
   }, [dbStatus, setLocalProjects])
 
   const updateProject = useCallback(async (updatedProject) => {
@@ -146,14 +180,23 @@ function App() {
     const cfg = map[dbStatus]
     if (!cfg) return null
     return (
-      <button
-        onClick={() => refreshData()}
-        className={`flex items-center gap-1.5 text-xs font-black uppercase px-3 py-1.5 rounded-xl ${cfg.color} hover:scale-105 active:scale-95 transition-all shadow-sm border border-current outline-none`}
-        title={dbMessage || 'Nhấn để làm mới dữ liệu'}
-      >
-        {cfg.icon}
-        <span className="hidden sm:inline">{cfg.text}</span>
-      </button>
+      <div className="flex items-center gap-1 sm:gap-2">
+        {dbStatus === 'synced' && (
+          <button 
+            onClick={syncLocalToCloud}
+            className="hidden sm:flex items-center gap-1 text-[10px] font-black bg-blue-600 text-white px-2 py-1.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all shadow-md shadow-blue-500/20"
+          >
+            <CloudArrowUpIcon className="w-3.5 h-3.5" /> ĐẨY LÊN MÂY
+          </button>
+        )}
+        <button
+          onClick={() => refreshData()}
+          className={`flex items-center gap-1.5 text-xs font-black uppercase px-3 py-1.5 rounded-xl ${cfg.color} hover:scale-105 active:scale-95 transition-all shadow-sm border border-current outline-none`}
+        >
+          {cfg.icon}
+          <span className="hidden sm:inline">{cfg.text}</span>
+        </button>
+      </div>
     )
   }
 
@@ -189,24 +232,14 @@ function App() {
             onEditProject={(p) => navigateTo('edit', p)}
             onDeleteProject={deleteProject}
             onCreateNew={() => navigateTo('create')}
+            onSyncLocal={syncLocalToCloud}
           />
         )}
 
-        {currentView === 'create' && (
-          <CreateProject onBack={() => navigateTo('home')} onSave={addProject} />
-        )}
-
-        {currentView === 'study' && currentProject && (
-          <StudyMode project={currentProject} onBack={() => navigateTo('home')} onUpdateProject={updateProject} />
-        )}
-
-        {currentView === 'edit' && currentProject && (
-          <EditCards project={currentProject} onBack={() => navigateTo('home')} onSave={updateProject} />
-        )}
+        {currentView === 'create' && <CreateProject onBack={() => navigateTo('home')} onSave={addProject} />}
+        {currentView === "study" && currentProject && <StudyMode project={currentProject} onBack={() => navigateTo('home')} onUpdateProject={updateProject} />}
+        {currentView === "edit" && currentProject && <EditCards project={currentProject} onBack={() => navigateTo('home')} onSave={updateProject} />}
       </div>
-      <footer className="text-center py-8 text-[10px] font-black uppercase text-slate-300 tracking-[0.2em]">
-        KennyQuiz • SMART AI LEARNING 🤖
-      </footer>
     </div>
   )
 }
