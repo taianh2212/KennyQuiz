@@ -131,13 +131,14 @@ const StudyMode = ({ project, onBack }) => {
   }
 
   const handleRestart = () => {
-    if (window.confirm("Xóa toàn bộ tiến độ và làm lại từ đầu?")) {
-      setAnsweredMap({})
-      setCurrentIndex(0)
-      syncProgress(0, {})
-      setShowFinalResult(false)
-    }
+    setAnsweredMap({})
+    setCurrentIndex(0)
+    setShowFinalResult(false)
+    setCards(project.cards) // về thứ tự gốc
+    setTestMode(false)
+    syncProgress(0, {})
   }
+
 
   if (loadingProgress) {
     return (
@@ -154,22 +155,35 @@ const StudyMode = ({ project, onBack }) => {
     return (
       <div className="max-w-2xl mx-auto pb-10 animate-in fade-in zoom-in duration-500">
         <div className="card-glass text-center p-8 sm:p-12 border-4 border-white shadow-2xl">
-          <div className="text-7xl mb-6"> {score >= 80 ? '🏆' : '💪'} </div>
-          <h2 className="text-3xl font-black mb-2 text-slate-800">Kết quả bài học</h2>
-          <div className="text-8xl font-black text-gradient mb-4">{score}%</div>
-          <p className="text-slate-400 font-bold mb-10 text-lg">Đúng {correctCount} / {total}</p>
-          <div className="space-y-4 max-w-sm mx-auto">
-            <button onClick={handleRestart} className="btn-primary w-full py-4 text-lg">
-              <ArrowPathIcon className="w-6 h-6" /> Học lại từ đầu
+          <div className="text-7xl mb-4">{score >= 80 ? '🏆' : score >= 50 ? '🎯' : '💪'}</div>
+          <h2 className="text-3xl font-black mb-1 text-slate-800">Kết quả bài học</h2>
+          <div className="text-8xl font-black text-gradient my-4">{score}%</div>
+          <p className="text-slate-400 font-bold mb-8 text-lg">Đúng {correctCount} / {total} câu</p>
+
+          {/* Progress bar */}
+          <div className="h-3 bg-slate-100 rounded-full mb-8 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-1000"
+              style={{ width: `${score}%` }}
+            />
+          </div>
+
+          <div className="space-y-3 max-w-sm mx-auto">
+            <button
+              onClick={handleRestart}
+              className="btn-primary w-full py-4 text-base bg-gradient-to-r from-blue-600 to-indigo-700"
+            >
+              <ArrowPathIcon className="w-5 h-5" /> Học lại từ đầu
             </button>
-            <button onClick={onBack} className="btn-secondary w-full py-4 text-lg">
-              <HomeIcon className="w-6 h-6" /> Về trang chính
+            <button onClick={onBack} className="btn-secondary w-full py-4 text-base">
+              <HomeIcon className="w-5 h-5" /> Về trang chính
             </button>
           </div>
         </div>
       </div>
     )
   }
+
 
   if (!currentCard) return null
 
@@ -288,6 +302,7 @@ const StudyMode = ({ project, onBack }) => {
         )}
       </div>
 
+      {/* Navigation dots + Restart button */}
       <div className="flex flex-wrap gap-2 justify-center pt-4">
         {cards.map((card, idx) => {
           const ans = answeredMap[card.id]
@@ -296,16 +311,28 @@ const StudyMode = ({ project, onBack }) => {
             <button
               key={card.id}
               onClick={() => goToQuestion(idx)}
-              className={`w-8 h-8 rounded-lg text-[10px] font-black transition-all ${isCurrent ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-100' : ans ? (ans.isCorrect ? 'bg-green-400 text-white' : 'bg-red-400 text-white') : 'bg-white text-slate-300 border border-slate-100'}`}
+              className={`w-8 h-8 rounded-lg text-[10px] font-black transition-all ${
+                isCurrent
+                  ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-100'
+                  : ans
+                  ? ans.isCorrect ? 'bg-green-400 text-white' : 'bg-red-400 text-white'
+                  : 'bg-white text-slate-300 border border-slate-100'
+              }`}
             >
               {idx + 1}
             </button>
           )
         })}
       </div>
-      <div className="text-center">
-        <button onClick={handleRestart} className="text-[10px] font-black text-slate-300 uppercase hover:text-red-500 transition-colors">
-          Cài lại tiến độ bài học này
+
+      {/* Restart strip */}
+      <div className="flex justify-center pt-2 pb-4">
+        <button
+          onClick={handleRestart}
+          className="flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-slate-100 rounded-2xl text-xs font-black text-slate-400 hover:border-red-200 hover:text-red-500 hover:bg-red-50 transition-all shadow-sm"
+        >
+          <ArrowPathIcon className="w-4 h-4" />
+          Học lại từ đầu
         </button>
       </div>
     </div>
