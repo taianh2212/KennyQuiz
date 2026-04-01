@@ -4,19 +4,17 @@ import { supabase } from './supabaseClient'
 // PROJECTS
 // ─────────────────────────────────────────────────
 
-/** Lấy toàn bộ dự án (sắp xếp mới nhất trước) */
 export const fetchProjects = async () => {
   const { data, error } = await supabase
     .from('projects')
     .select(`
-      id, name, created_at, updated_at,
+      id, name, created_at, updated_at, user_id,
       cards ( id, question, answer, options, position )
     `)
     .order('created_at', { ascending: false })
 
   if (error) throw error
 
-  // Chuẩn hoá: sắp xếp cards theo position
   return data.map((p) => ({
     ...p,
     cards: (p.cards || [])
@@ -28,18 +26,18 @@ export const fetchProjects = async () => {
   }))
 }
 
-/** Tạo dự án mới kèm cards */
 export const createProject = async ({ name, cards }) => {
-  // 1. Insert project
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Cần đăng nhập để tạo dự án!')
+
   const { data: project, error: pErr } = await supabase
     .from('projects')
-    .insert({ name })
+    .insert({ name, user_id: user.id })
     .select()
     .single()
 
   if (pErr) throw pErr
 
-  // 2. Insert cards (batch)
   if (cards && cards.length > 0) {
     const cardRows = cards.map((c, idx) => ({
       project_id: project.id,
@@ -48,21 +46,17 @@ export const createProject = async ({ name, cards }) => {
       options: c.options || null,
       position: idx,
     }))
-
     const { error: cErr } = await supabase.from('cards').insert(cardRows)
     if (cErr) throw cErr
   }
-
-  // 3. Return full project with cards
   return fetchProjectById(project.id)
 }
 
-/** Lấy một dự án theo id */
 export const fetchProjectById = async (id) => {
   const { data, error } = await supabase
     .from('projects')
     .select(`
-      id, name, created_at, updated_at,
+      id, name, created_at, updated_at, user_id,
       cards ( id, question, answer, options, position )
     `)
     .eq('id', id)
@@ -77,9 +71,7 @@ export const fetchProjectById = async (id) => {
   }
 }
 
-/** Cập nhật tên dự án và toàn bộ cards (xoá cũ, thêm mới) */
 export const updateProject = async ({ id, name, cards }) => {
-  // 1. Update project name
   const { error: pErr } = await supabase
     .from('projects')
     .update({ name, updated_at: new Date().toISOString() })
@@ -87,15 +79,9 @@ export const updateProject = async ({ id, name, cards }) => {
 
   if (pErr) throw pErr
 
-  // 2. Xoá toàn bộ cards cũ (cascade sẽ xoá tự động nếu project bị xoá, nhưng ở đây ta update)
-  const { error: dErr } = await supabase
-    .from('cards')
-    .delete()
-    .eq('project_id', id)
-
+  const { error: dErr } = await supabase.from('cards').delete().eq('project_id', id)
   if (dErr) throw dErr
 
-  // 3. Thêm cards mới
   if (cards && cards.length > 0) {
     const cardRows = cards.map((c, idx) => ({
       project_id: id,
@@ -107,24 +93,52 @@ export const updateProject = async ({ id, name, cards }) => {
     const { error: cErr } = await supabase.from('cards').insert(cardRows)
     if (cErr) throw cErr
   }
-
   return fetchProjectById(id)
 }
 
-/** Xoá dự án (cards bị xoá tự động do ON DELETE CASCADE) */
 export const deleteProject = async (id) => {
   const { error } = await supabase.from('projects').delete().eq('id', id)
   if (error) throw error
 }
 
 // ─────────────────────────────────────────────────
-// SYNC HELPER: localStorage ↔ Supabase
+// PROGRESS SYNC
 // ─────────────────────────────────────────────────
 
-/**
- * Kiểm tra Supabase có kết nối được không.
- * Trả về true nếu OK, false nếu lỗi (sẽ dùng localStorage fallback).
- */
+export const saveProgress = async (projectId, lastIndex, answeredData) => {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return
+
+  const { error } = await supabase
+    .from('user_progress')
+    .upsert({
+      user_id: user.id,
+      project_id: projectId,
+      last_index: lastIndex,
+      answered_data: answeredData,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id, project_id' })
+  
+  if (error) console.error('Lỗi lưu tiến độ:', error)
+}
+
+export const getProgress = async (projectId) => {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+
+  const { data, error } = await supabase
+    .from('user_progress')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('project_id', projectId)
+    .single()
+
+  if (error && error.code !== 'PGRST116') { // PGRST116 = No rows found
+    console.error('Lỗi tải tiến độ:', error)
+  }
+  return data || null
+}
+
 export const checkSupabaseConnection = async () => {
   try {
     const { error } = await supabase.from('projects').select('id').limit(1)

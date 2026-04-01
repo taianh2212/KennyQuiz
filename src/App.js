@@ -4,14 +4,15 @@ import CreateProject from './components/CreateProject'
 import StudyMode from './components/StudyMode'
 import EditCards from './components/EditCards'
 import Tutorial from './components/Tutorial'
-import { useLocalStorage } from './hooks/useLocalStorage'
+import Auth from './components/Auth'
+import { supabase } from './utils/supabaseClient'
 import {
   SparklesIcon,
   QuestionMarkCircleIcon,
-  CloudArrowUpIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   ArrowPathIcon,
+  ArrowRightOnRectangleIcon,
 } from '@heroicons/react/24/outline'
 import {
   fetchProjects,
@@ -21,206 +22,84 @@ import {
   checkSupabaseConnection,
 } from './utils/supabaseService'
 
-const SUPABASE_ENABLED = !!(
-  process.env.REACT_APP_SUPABASE_ANON_KEY &&
-  process.env.REACT_APP_SUPABASE_ANON_KEY !== 'YOUR_ANON_KEY_HERE'
-)
-
 function App() {
-  const [currentView, setCurrentView]   = useState('home')
-  const [localProjects, setLocalProjects] = useLocalStorage('kennyquiz_projects', [])
-  const [projects, setProjects]         = useState(localProjects)
+  const [session, setSession] = useState(null)
+  const [currentView, setCurrentView] = useState('home')
+  const [projects, setProjects] = useState([])
   const [currentProject, setCurrentProject] = useState(null)
   const [showTutorial, setShowTutorial] = useState(() => !localStorage.getItem('kennyquiz_tutorial_seen'))
+  const [dbStatus, setDbStatus] = useState('idle')
 
-  const [dbStatus, setDbStatus]   = useState('idle')
-  const [dbMessage, setDbMessage] = useState('')
+  // ── Auth Watcher ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+      if (session) refreshData()
+      else setProjects([])
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
-  // ── Sync Local to Cloud ──────────────────────────────────────────────────
-  const syncLocalToCloud = useCallback(async () => {
-    if (!SUPABASE_ENABLED || projects.length === 0) return
-    
+  const refreshData = useCallback(async () => {
+    if (!session) return
     setDbStatus('loading')
-    setDbMessage('Đang đẩy dữ liệu lên Cloud...')
-    
-    try {
-      // 1. Lấy dữ liệu mới nhất từ Cloud
-      const cloudData = await fetchProjects()
-      const cloudIds = new Set(cloudData.map(p => p.id))
-      
-      // 2. Tìm những dự án CHỈ có ở local (ID không phải UUID của Supabase)
-      const onlyLocal = projects.filter(p => !cloudIds.has(p.id))
-      
-      if (onlyLocal.length === 0) {
-        setProjects(cloudData)
-        setLocalProjects(cloudData)
-        setDbStatus('synced')
-        setDbMessage('Đã đồng bộ sạch sẽ!')
-        return
-      }
-
-      // 3. Đẩy từng dự án lên
-      for (const lp of onlyLocal) {
-        await sbCreate({ name: lp.name, cards: lp.cards })
-      }
-
-      // 4. Refresh lại toàn bộ
-      const finalData = await fetchProjects()
-      setProjects(finalData)
-      setLocalProjects(finalData)
-      setDbStatus('synced')
-      alert(`Đã đưa thành công ${onlyLocal.length} dự án từ máy lên Cloud!`)
-    } catch (err) {
-      setDbStatus('error')
-      setDbMessage('Lỗi đồng bộ: ' + err.message)
-    }
-  }, [projects, setLocalProjects])
-
-  const refreshData = useCallback(async (silent = false) => {
-    if (!SUPABASE_ENABLED) return
-    if (!silent) setDbStatus('loading')
     try {
       const data = await fetchProjects()
       setProjects(data)
-      setLocalProjects(data)
       setDbStatus('synced')
     } catch (err) {
       setDbStatus('error')
     }
-  }, [setLocalProjects])
+  }, [session])
 
   useEffect(() => {
-    const init = async () => {
-      if (!SUPABASE_ENABLED) {
-        setDbStatus('offline')
-        return
-      }
-      setDbStatus('loading')
-      const ok = await checkSupabaseConnection()
-      if (ok) {
-        await refreshData(true)
-      } else {
-        setDbStatus('error')
-      }
-    }
-    init()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    if (session) refreshData()
+  }, [session, refreshData])
 
-  const handleCloseTutorial = () => {
-    setShowTutorial(false)
-    localStorage.setItem('kennyquiz_tutorial_seen', 'true')
+  const handleLogout = async () => {
+    if (window.confirm("Đăng xuất khỏi hệ thống?")) {
+      await supabase.auth.signOut()
+      setCurrentView('home')
+    }
   }
-
-  const addProject = useCallback(async (project) => {
-    setDbStatus('loading')
-    let savedProject = null
-    if (SUPABASE_ENABLED && dbStatus !== 'offline' && dbStatus !== 'error') {
-      try {
-        savedProject = await sbCreate(project)
-      } catch (err) {
-        setDbStatus('error')
-      }
-    }
-    const finalProject = savedProject || {
-      ...project,
-      id: Date.now().toString(),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }
-    setProjects(prev => [finalProject, ...prev])
-    setLocalProjects(prev => [finalProject, ...prev])
-    if (savedProject) setDbStatus('synced')
-    setCurrentView('home')
-  }, [dbStatus, setLocalProjects])
-
-  const updateProject = useCallback(async (updatedProject) => {
-    setDbStatus('loading')
-    let saved = null
-    if (SUPABASE_ENABLED && dbStatus !== 'offline' && dbStatus !== 'error') {
-      try {
-        saved = await sbUpdate(updatedProject)
-      } catch (err) {
-        setDbStatus('error')
-      }
-    }
-    const final = saved || { ...updatedProject, updated_at: new Date().toISOString() }
-    setProjects(prev => prev.map(p => p.id === final.id ? final : p))
-    setLocalProjects(prev => prev.map(p => p.id === final.id ? final : p))
-    if (saved) setDbStatus('synced')
-  }, [dbStatus, setLocalProjects])
-
-  const deleteProject = useCallback(async (projectId) => {
-    if (SUPABASE_ENABLED && dbStatus !== 'offline' && dbStatus !== 'error') {
-      setDbStatus('loading')
-      try {
-        await sbDelete(projectId)
-        setDbStatus('synced')
-      } catch (err) {
-        setDbStatus('error')
-      }
-    }
-    setProjects(prev => prev.filter(p => p.id !== projectId))
-    setLocalProjects(prev => prev.filter(p => p.id !== projectId))
-  }, [dbStatus, setLocalProjects])
 
   const navigateTo = (view, project = null) => {
     setCurrentProject(project)
     setCurrentView(view)
   }
 
-  const SyncBadge = () => {
-    const map = {
-      loading: { icon: <ArrowPathIcon className="w-4 h-4 animate-spin" />, color: 'text-blue-500 bg-blue-50', text: 'Đang tải...' },
-      synced:  { icon: <CheckCircleIcon  className="w-4 h-4" />,              color: 'text-green-600 bg-green-50', text: 'Cloud ☁️' },
-      offline: { icon: <ExclamationTriangleIcon className="w-4 h-4" />,       color: 'text-amber-500 bg-amber-50', text: 'Offline' },
-      error:   { icon: <ExclamationTriangleIcon className="w-4 h-4" />,       color: 'text-red-500 bg-red-50',    text: 'Lỗi' },
-      idle:    null,
-    }
-    const cfg = map[dbStatus]
-    if (!cfg) return null
-    return (
-      <div className="flex items-center gap-1 sm:gap-2">
-        {dbStatus === 'synced' && (
-          <button 
-            onClick={syncLocalToCloud}
-            className="hidden sm:flex items-center gap-1 text-[10px] font-black bg-blue-600 text-white px-2 py-1.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all shadow-md shadow-blue-500/20"
-          >
-            <CloudArrowUpIcon className="w-3.5 h-3.5" /> ĐẨY LÊN MÂY
-          </button>
-        )}
-        <button
-          onClick={() => refreshData()}
-          className={`flex items-center gap-1.5 text-xs font-black uppercase px-3 py-1.5 rounded-xl ${cfg.color} hover:scale-105 active:scale-95 transition-all shadow-sm border border-current outline-none`}
-        >
-          {cfg.icon}
-          <span className="hidden sm:inline">{cfg.text}</span>
-        </button>
-      </div>
-    )
+  if (!session) {
+    return <Auth onAuthSuccess={() => {}} />
   }
 
   return (
     <div className="min-h-screen bg-mesh bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      {showTutorial && <Tutorial onClose={handleCloseTutorial} />}
+      {showTutorial && <Tutorial onClose={() => setShowTutorial(false)} />}
+      
       <div className="container mx-auto px-4 py-6 max-w-5xl">
         <header className="flex justify-between items-center mb-10">
           <button onClick={() => navigateTo('home')} className="flex items-center gap-3">
-            <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/25">
+            <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-700 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/25">
               <SparklesIcon className="w-6 h-6 text-white" />
             </div>
             <div className="text-left">
               <h1 className="text-2xl font-black text-gradient leading-none">KennyQuiz</h1>
-              <p className="text-xs text-gray-400 font-medium">AI-powered learning</p>
+              <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mt-1">
+                {session.user.email.split('@')[0]}
+              </p>
             </div>
           </button>
-          <div className="flex items-center gap-2 sm:gap-4">
-            <SyncBadge />
-            <button
-              onClick={() => setShowTutorial(true)}
-              className="p-2.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"
+          
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => refreshData()}
+              className={`p-2.5 rounded-xl transition-all ${dbStatus === 'loading' ? 'text-blue-500 animate-spin' : 'text-slate-400 hover:text-blue-500'}`}
             >
-              <QuestionMarkCircleIcon className="w-6 h-6" />
+              <ArrowPathIcon className="w-6 h-6" />
+            </button>
+            <button onClick={handleLogout} className="p-2.5 text-slate-400 hover:text-red-500 rounded-xl transition-all">
+              <ArrowRightOnRectangleIcon className="w-6 h-6" />
             </button>
           </div>
         </header>
@@ -230,15 +109,14 @@ function App() {
             projects={projects}
             onSelectProject={(p) => navigateTo('study', p)}
             onEditProject={(p) => navigateTo('edit', p)}
-            onDeleteProject={deleteProject}
+            onDeleteProject={sbDelete}
             onCreateNew={() => navigateTo('create')}
-            onSyncLocal={syncLocalToCloud}
           />
         )}
 
-        {currentView === 'create' && <CreateProject onBack={() => navigateTo('home')} onSave={addProject} />}
-        {currentView === "study" && currentProject && <StudyMode project={currentProject} onBack={() => navigateTo('home')} onUpdateProject={updateProject} />}
-        {currentView === "edit" && currentProject && <EditCards project={currentProject} onBack={() => navigateTo('home')} onSave={updateProject} />}
+        {currentView === 'create' && <CreateProject onBack={() => navigateTo('home')} onSave={sbCreate} />}
+        {currentView === 'study' && currentProject && <StudyMode project={currentProject} onBack={() => navigateTo('home')} />}
+        {currentView === 'edit' && currentProject && <EditCards project={currentProject} onBack={() => navigateTo('home')} onSave={sbUpdate} />}
       </div>
     </div>
   )

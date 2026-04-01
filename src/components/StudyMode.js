@@ -7,7 +7,10 @@ import {
   HomeIcon,
   SparklesIcon,
   ArrowUturnLeftIcon,
+  PlayIcon,
+  AcademicCapIcon,
 } from '@heroicons/react/24/outline'
+import { saveProgress, getProgress } from '../utils/supabaseService'
 
 const shuffleArray = (array) => {
   const arr = [...array]
@@ -21,60 +24,83 @@ const shuffleArray = (array) => {
 const ANSWER_DELAY = 1000 
 
 const StudyMode = ({ project, onBack }) => {
-  const [shuffleQuestions, setShuffleQuestions] = useState(true)
-  const [shuffleOptions, setShuffleOptions] = useState(true)
-  const [cards, setCards] = useState([])
+  const [testMode, setTestMode] = useState(false) // false = Học (thứ tự gốc), true = Kiểm tra (xáo trộn)
+  const [cards, setCards] = useState(project.cards)
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [answeredMap, setAnsweredMap] = useState({}) // { cardId: { isCorrect, selected } }
+  const [answeredMap, setAnsweredMap] = useState({})
   const [showFinalResult, setShowFinalResult] = useState(false)
   const [timerId, setTimerId] = useState(null)
+  const [loadingProgress, setLoadingProgress] = useState(true)
 
-  const initSession = useCallback((sourceCards = project.cards) => {
-    const ordered = shuffleQuestions ? shuffleArray(sourceCards) : [...sourceCards]
-    setCards(ordered)
-    setCurrentIndex(0)
-    setAnsweredMap({})
-    setShowFinalResult(false)
-    if (timerId) clearTimeout(timerId)
-  }, [shuffleQuestions, project.cards, timerId])
-
+  // ── Load Progress ────────────────────────────────────────────────────────
   useEffect(() => {
-    initSession()
-    return () => { if (timerId) clearTimeout(timerId) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project])
+    const loadSession = async () => {
+      setLoadingProgress(true)
+      const data = await getProgress(project.id)
+      if (data) {
+        setAnsweredMap(data.answered_data || {})
+        setCurrentIndex(data.last_index || 0)
+      }
+      setLoadingProgress(false)
+    }
+    loadSession()
+  }, [project.id])
+
+  // ── Sync to Cloud ────────────────────────────────────────────────────────
+  const syncProgress = useCallback(async (idx, amap) => {
+    await saveProgress(project.id, idx, amap)
+  }, [project.id])
+
+  // ── Handle Mode Toggle ───────────────────────────────────────────────────
+  const toggleTestMode = () => {
+    if (!testMode) {
+      if (window.confirm("Bắt đầu chế độ KIỂM TRA? Các câu hỏi sẽ được XÁO TRỘN và tiến độ cũ sẽ bị đặt lại.")) {
+        setCards(shuffleArray(project.cards))
+        setCurrentIndex(0)
+        setAnsweredMap({})
+        setTestMode(true)
+      }
+    } else {
+      setCards(project.cards)
+      setTestMode(false)
+    }
+  }
 
   const currentCard = cards[currentIndex]
 
   const options = useMemo(() => {
     if (!currentCard) return []
+    // Ở chế độ kiểm tra, xáo cả đáp án
+    const shuffleOptions = testMode
+    
     if (currentCard.options && currentCard.options.length >= 2) {
       return shuffleOptions ? shuffleArray([...currentCard.options]) : [...currentCard.options]
     }
-    const others = cards.filter(c => c.id !== currentCard.id).map(c => c.answer)
-    const shuffledOthers = shuffleArray(others)
-    const wrongOnes = shuffledOthers.slice(0, Math.min(3, shuffledOthers.length))
+    
+    // Fallback options
+    const others = project.cards.filter(c => c.id !== currentCard.id).map(c => c.answer)
+    const wrongOnes = shuffleArray(others).slice(0, 3)
     let all = [currentCard.answer, ...wrongOnes]
-    while (all.length < 2) all.push('(No other options)')
     return shuffleOptions ? shuffleArray(all) : all
-  }, [currentCard, cards, shuffleOptions])
+  }, [currentCard, project.cards, testMode])
 
   const currentAnswered = currentCard ? answeredMap[currentCard.id] : null
   const correctCount = Object.values(answeredMap).filter(a => a.isCorrect).length
 
-  // -- MAIN ACTION: Answer and move --
   const handleAnswer = (selected) => {
     if (!currentCard || currentAnswered) return
     const isCorrect = selected === currentCard.answer
-    setAnsweredMap(prev => ({
-      ...prev,
-      [currentCard.id]: { isCorrect, selected }
-    }))
+    const newMap = { ...answeredMap, [currentCard.id]: { isCorrect, selected } }
+    setAnsweredMap(newMap)
+    
+    // Sync to Cloud
+    syncProgress(currentIndex, newMap)
 
-    // ALWAYS move to next question regardless of right/wrong
     const tid = setTimeout(() => {
       if (currentIndex + 1 < cards.length) {
-        setCurrentIndex(prev => prev + 1)
+        const nextIdx = currentIndex + 1
+        setCurrentIndex(nextIdx)
+        syncProgress(nextIdx, newMap)
       } else {
         setShowFinalResult(true)
       }
@@ -82,48 +108,50 @@ const StudyMode = ({ project, onBack }) => {
     setTimerId(tid)
   }
 
-  // -- REDO ACTION: Only if user manually came back to a wrong card --
   const handleRedoCurrent = () => {
     if (!currentCard) return
-    if (timerId) clearTimeout(timerId)
-    setAnsweredMap(prev => {
-      const newMap = { ...prev }
-      delete newMap[currentCard.id]
-      return newMap
-    })
+    const newMap = { ...answeredMap }
+    delete newMap[currentCard.id]
+    setAnsweredMap(newMap)
+    syncProgress(currentIndex, newMap)
   }
 
   const goToQuestion = (idx) => {
-    if (timerId) clearTimeout(timerId)
     setCurrentIndex(idx)
+    syncProgress(idx, answeredMap)
   }
 
-  const handleRetryIncorrect = () => {
-    const inc = cards.filter(c => !answeredMap[c.id]?.isCorrect)
-    if (inc.length === 0) return
-    initSession(inc)
+  const handleRestart = () => {
+    if (window.confirm("Xóa toàn bộ tiến độ và làm lại từ đầu?")) {
+      setAnsweredMap({})
+      setCurrentIndex(0)
+      syncProgress(0, {})
+      setShowFinalResult(false)
+    }
   }
 
-  const handleRestart = () => initSession(project.cards)
+  if (loadingProgress) {
+    return (
+      <div className="flex flex-col items-center justify-center p-20 text-slate-400">
+        <ArrowPathIcon className="w-12 h-12 animate-spin mb-4" />
+        <p className="font-black uppercase tracking-widest text-xs">Đang rước tiến độ từ Cloud...</p>
+      </div>
+    )
+  }
 
   if (showFinalResult) {
     const total = cards.length
     const score = Math.round((correctCount / total) * 100)
     return (
-      <div className="max-w-2xl mx-auto pb-10 pop-in">
+      <div className="max-w-2xl mx-auto pb-10 animate-in fade-in zoom-in duration-500">
         <div className="card-glass text-center p-8 sm:p-12 border-4 border-white shadow-2xl">
-          <div className="text-7xl mb-6"> {score >= 80 ? '🏆' : score >= 50 ? '🥈' : '💪'} </div>
-          <h2 className="text-3xl font-black mb-2 text-slate-800">{score >= 80 ? 'Hoàn thành bài tập!' : 'Hãy cố gắng hơn!'}</h2>
+          <div className="text-7xl mb-6"> {score >= 80 ? '🏆' : '💪'} </div>
+          <h2 className="text-3xl font-black mb-2 text-slate-800">Kết quả bài học</h2>
           <div className="text-8xl font-black text-gradient mb-4">{score}%</div>
-          <p className="text-slate-400 font-bold mb-10 text-lg">Đúng {correctCount} / Tổng {total}</p>
+          <p className="text-slate-400 font-bold mb-10 text-lg">Đúng {correctCount} / {total}</p>
           <div className="space-y-4 max-w-sm mx-auto">
-            {total - correctCount > 0 && (
-              <button onClick={handleRetryIncorrect} className="btn-primary w-full bg-orange-500 shadow-orange-500/20 py-4 text-lg">
-                <ArrowPathIcon className="w-6 h-6" /> Ôn lại các câu sai
-              </button>
-            )}
             <button onClick={handleRestart} className="btn-primary w-full py-4 text-lg">
-              <ArrowPathIcon className="w-6 h-6" /> Làm lại từ đầu
+              <ArrowPathIcon className="w-6 h-6" /> Học lại từ đầu
             </button>
             <button onClick={onBack} className="btn-secondary w-full py-4 text-lg">
               <HomeIcon className="w-6 h-6" /> Về trang chính
@@ -142,27 +170,39 @@ const StudyMode = ({ project, onBack }) => {
         <button onClick={onBack} className="flex items-center gap-1.5 text-slate-400 hover:text-slate-600 font-bold text-sm">
           <ArrowLeftIcon className="w-4 h-4" /> Thoát
         </button>
-        <div className="text-xs font-black text-blue-500 uppercase tracking-widest whitespace-nowrap">
-          Đúng: {correctCount} / {cards.length}
+
+        <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+          <button 
+            onClick={() => setTestMode(false)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${!testMode ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+          >
+            <AcademicCapIcon className="w-3.5 h-3.5" /> HỌC (Thứ tự gốc)
+          </button>
+          <button 
+            onClick={toggleTestMode}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${testMode ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+          >
+            <PlayIcon className="w-3.5 h-3.5" /> KIỂM TRA (Xáo)
+          </button>
         </div>
       </div>
 
       <div className="space-y-2">
         <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">
-          <span>Câu {currentIndex + 1}</span>
-          <span>{Math.round(((currentIndex + 1) / cards.length) * 100)}%</span>
+          <span>{testMode ? 'CHẾ ĐỘ KIỂM TRA' : 'CHẾ ĐỘ HỌC TẬP'}</span>
+          <span>Câu {currentIndex + 1} / {cards.length}</span>
         </div>
         <div className="h-2.5 bg-white rounded-full border border-slate-100 shadow-inner overflow-hidden">
           <div 
-            className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-300"
+            className={`h-full transition-all duration-300 ${testMode ? 'bg-orange-500' : 'bg-blue-600'}`}
             style={{ width: `${((currentIndex + 1) / cards.length) * 100}%` }}
           />
         </div>
       </div>
 
-      <div className="card-glass p-6 sm:p-10 slide-in-top border-4 border-white shadow-xl min-h-[420px] flex flex-col relative">
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-widest mb-6 border border-blue-100 w-fit">
-          <SparklesIcon className="w-3 h-3" /> Flashcard 
+      <div className="card-glass p-6 sm:p-10 slide-in-top border-4 border-white shadow-xl min-h-[420px] flex flex-col relative transition-all duration-500">
+        <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest mb-6 border w-fit ${testMode ? 'bg-orange-50 text-orange-600 border-orange-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>
+          <SparklesIcon className="w-3 h-3" /> {testMode ? 'Test Mode' : 'Learn Mode'} 
         </div>
         
         <h3 className="text-xl sm:text-2xl font-bold text-slate-800 leading-[1.4] mb-10 text-pretty">
@@ -184,7 +224,7 @@ const StudyMode = ({ project, onBack }) => {
 
             return (
               <button
-                key={idx}
+                key={`${currentCard.id}-${idx}`}
                 onClick={() => handleAnswer(option)}
                 disabled={!!currentAnswered}
                 className={`w-full text-left p-5 border-2 rounded-2xl font-bold text-base sm:text-lg transition-all duration-200 flex items-center gap-4 ${stateStyle}`}
@@ -198,14 +238,13 @@ const StudyMode = ({ project, onBack }) => {
           })}
         </div>
 
-        {/* Feedback + Redo (Only when answered and no timer running) */}
         {currentAnswered && (
           <div className={`mt-8 p-5 rounded-2xl flex items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-2 ${currentAnswered.isCorrect ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
             <div className="flex items-center gap-3">
               <div className="text-3xl">{currentAnswered.isCorrect ? '✅' : '❌'}</div>
               <div>
-                <p className="text-lg font-black leading-none">{currentAnswered.isCorrect ? 'Chính xác!' : 'Chưa đúng rồi!'}</p>
-                {!currentAnswered.isCorrect && <p className="text-xs mt-1 font-bold opacity-75">Sửa lại cho đúng nhé!</p>}
+                <p className="text-lg font-black leading-none">{currentAnswered.isCorrect ? 'Tuyệt lắm!' : 'Cố gắng lên!'}</p>
+                {!currentAnswered.isCorrect && <p className="text-xs mt-1 font-bold opacity-75">Học kỹ lại rồi thử lại nhé.</p>}
               </div>
             </div>
             
@@ -214,7 +253,7 @@ const StudyMode = ({ project, onBack }) => {
                 onClick={handleRedoCurrent}
                 className="flex items-center gap-1.5 px-4 py-2 bg-white border-2 border-red-100 rounded-xl text-xs font-black uppercase text-red-500 hover:bg-red-50 transition-all shadow-sm"
               >
-                <ArrowUturnLeftIcon className="w-4 h-4" /> Làm lại
+                <ArrowUturnLeftIcon className="w-4 h-4" /> Sửa lại
               </button>
             )}
           </div>
@@ -227,14 +266,19 @@ const StudyMode = ({ project, onBack }) => {
           const isCurrent = idx === currentIndex
           return (
             <button
-              key={idx}
+              key={card.id}
               onClick={() => goToQuestion(idx)}
-              className={`w-8 h-8 rounded-lg text-[10px] font-black transition-all ${isCurrent ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-100' : ans ? (ans.isCorrect ? 'bg-green-400 text-white' : 'bg-red-400 text-white') : 'bg-white text-slate-300 border border-slate-100 hover:text-blue-500'}`}
+              className={`w-8 h-8 rounded-lg text-[10px] font-black transition-all ${isCurrent ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-100' : ans ? (ans.isCorrect ? 'bg-green-400 text-white' : 'bg-red-400 text-white') : 'bg-white text-slate-300 border border-slate-100'}`}
             >
               {idx + 1}
             </button>
           )
         })}
+      </div>
+      <div className="text-center">
+        <button onClick={handleRestart} className="text-[10px] font-black text-slate-300 uppercase hover:text-red-500 transition-colors">
+          Cài lại tiến độ bài học này
+        </button>
       </div>
     </div>
   )
