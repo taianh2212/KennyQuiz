@@ -50,13 +50,13 @@ const StudyMode = ({ project, onBack }) => {
   // ── Sync to Cloud ────────────────────────────────────────────────
   const syncProgress = useCallback(async (idx, amap) => {
     setSyncStatus('saving')
-    try {
-      await saveProgress(project.id, idx, amap)
+    const result = await saveProgress(project.id, idx, amap)
+    if (result?.cloudOk) {
       setSyncStatus('saved')
-      setTimeout(() => setSyncStatus('idle'), 2000)
-    } catch (err) {
+      setTimeout(() => setSyncStatus('idle'), 2500)
+    } else {
       setSyncStatus('error')
-      console.error('Sync failed:', err)
+      setTimeout(() => setSyncStatus('idle'), 4000)
     }
   }, [project.id])
 

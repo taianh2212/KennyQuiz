@@ -185,13 +185,13 @@ export const deleteProject = async (id) => {
 
 export const saveProgress = async (projectId, lastIndex, answeredData) => {
   const user = getCurrentUser()
-  if (!user) return
+  if (!user) return { cloudOk: false }
 
-  // Luôn lưu vào localStorage trước (nhanh + an toàn)
+  // Bước 1: luôn lưu localStorage trước (nhanh, không bao giờ thất bại)
   const localKey = `progress_${user.id}_${projectId}`
   localStorage.setItem(localKey, JSON.stringify({ last_index: lastIndex, answered_data: answeredData }))
 
-  // Sau đó đồng bộ lên Supabase
+  // Bước 2: đồng bộ lên Supabase, trả về kết quả thực
   try {
     const { error } = await supabase
       .from('user_progress')
@@ -203,9 +203,14 @@ export const saveProgress = async (projectId, lastIndex, answeredData) => {
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id,project_id' })
 
-    if (error) console.warn('Lưu tiến độ lên Cloud thất bại (đã lưu local):', error.message)
+    if (error) {
+      console.warn('☁️ Cloud save failed:', error.message)
+      return { cloudOk: false, error: error.message }
+    }
+    return { cloudOk: true }
   } catch (err) {
-    console.warn('Supabase unavailable, chỉ lưu local:', err.message)
+    console.warn('☁️ Cloud unreachable:', err.message)
+    return { cloudOk: false, error: err.message }
   }
 }
 
