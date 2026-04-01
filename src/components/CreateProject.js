@@ -21,6 +21,7 @@ const CreateProject = ({ onBack, onSave }) => {
   const [rawText, setRawText] = useState('')
   const [cards, setCards] = useState([])
   const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [isMCQDetected, setIsMCQDetected] = useState(false)
   
@@ -74,12 +75,20 @@ const CreateProject = ({ onBack, onSave }) => {
     setCards(cards.map(c => c.id === id ? { ...c, [field]: value } : c))
   }
 
-  const submitProject = () => {
+  const submitProject = async () => {
     if (cards.length === 0) {
       setError('Ít nhất phải có 1 thẻ chứ!')
       return
     }
-    onSave({ name: projectName, cards })
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave({ name: projectName, cards })
+    } catch (err) {
+      console.error('Lưu thất bại:', err)
+      setError('Lỗi lưu: ' + err.message)
+      setSaving(false)
+    }
   }
 
   // =================== STEP: CHOOSE ===================
@@ -235,11 +244,21 @@ const CreateProject = ({ onBack, onSave }) => {
         </div>
         <button 
           onClick={submitProject}
-          className="btn-primary py-3 px-6 shadow-green-500/30 bg-green-600 text-sm sm:text-base outline-none ring-4 ring-green-100"
+          disabled={saving}
+          className="btn-primary py-3 px-6 shadow-green-500/30 bg-green-600 text-sm sm:text-base outline-none ring-4 ring-green-100 disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          <CloudArrowUpIcon className="w-5 h-5" /> Lưu ngay
+          {saving
+            ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Đang lưu...</>
+            : <><CloudArrowUpIcon className="w-5 h-5" /> Lưu ngay</>
+          }
         </button>
       </header>
+
+      {error && (
+        <div className="p-4 bg-red-50 text-red-600 rounded-2xl flex items-center gap-3 font-bold text-sm">
+          <ExclamationCircleIcon className="w-5 h-5 flex-shrink-0" /> {error}
+        </div>
+      )}
 
       <div className="space-y-4">
         {cards.map((card, idx) => (
