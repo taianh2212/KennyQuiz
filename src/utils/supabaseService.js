@@ -187,34 +187,53 @@ export const saveProgress = async (projectId, lastIndex, answeredData) => {
   const user = getCurrentUser()
   if (!user) return
 
-  const { error } = await supabase
-    .from('user_progress')
-    .upsert({
-      user_id: user.id,
-      project_id: projectId,
-      last_index: lastIndex,
-      answered_data: answeredData,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id,project_id' })
+  // Luôn lưu vào localStorage trước (nhanh + an toàn)
+  const localKey = `progress_${user.id}_${projectId}`
+  localStorage.setItem(localKey, JSON.stringify({ last_index: lastIndex, answered_data: answeredData }))
 
-  if (error) console.error('Lỗi lưu tiến độ:', error)
+  // Sau đó đồng bộ lên Supabase
+  try {
+    const { error } = await supabase
+      .from('user_progress')
+      .upsert({
+        user_id: user.id,
+        project_id: projectId,
+        last_index: lastIndex,
+        answered_data: answeredData,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,project_id' })
+
+    if (error) console.warn('Lưu tiến độ lên Cloud thất bại (đã lưu local):', error.message)
+  } catch (err) {
+    console.warn('Supabase unavailable, chỉ lưu local:', err.message)
+  }
 }
 
 export const getProgress = async (projectId) => {
   const user = getCurrentUser()
   if (!user) return null
 
-  const { data, error } = await supabase
-    .from('user_progress')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('project_id', projectId)
-    .single()
+  // Thử lấy từ Supabase trước
+  try {
+    const { data, error } = await supabase
+      .from('user_progress')
+      .select('last_index, answered_data')
+      .eq('user_id', user.id)
+      .eq('project_id', projectId)
+      .single()
 
-  if (error && error.code !== 'PGRST116') {
-    console.error('Lỗi tải tiến độ:', error)
+    if (!error && data) return data
+  } catch (err) {
+    console.warn('Không lấy được tiến độ từ Cloud:', err.message)
   }
-  return data || null
+
+  // Fallback: lấy từ localStorage
+  const localKey = `progress_${user.id}_${projectId}`
+  const raw = localStorage.getItem(localKey)
+  if (raw) {
+    try { return JSON.parse(raw) } catch { return null }
+  }
+  return null
 }
 
 export const checkSupabaseConnection = async () => {
