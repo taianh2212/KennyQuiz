@@ -24,13 +24,14 @@ const shuffleArray = (array) => {
 const ANSWER_DELAY = 1000 
 
 const StudyMode = ({ project, onBack }) => {
-  const [testMode, setTestMode] = useState(false) // false = Học (thứ tự gốc), true = Kiểm tra (xáo trộn)
+  const [testMode, setTestMode] = useState(false)
   const [cards, setCards] = useState(project.cards)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [answeredMap, setAnsweredMap] = useState({})
   const [showFinalResult, setShowFinalResult] = useState(false)
   const [timerId, setTimerId] = useState(null)
   const [loadingProgress, setLoadingProgress] = useState(true)
+  const [syncStatus, setSyncStatus] = useState('idle') // 'idle' | 'saving' | 'saved' | 'error'
 
   // ── Load Progress ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -46,9 +47,17 @@ const StudyMode = ({ project, onBack }) => {
     loadSession()
   }, [project.id])
 
-  // ── Sync to Cloud ────────────────────────────────────────────────────────
+  // ── Sync to Cloud ────────────────────────────────────────────────
   const syncProgress = useCallback(async (idx, amap) => {
-    await saveProgress(project.id, idx, amap)
+    setSyncStatus('saving')
+    try {
+      await saveProgress(project.id, idx, amap)
+      setSyncStatus('saved')
+      setTimeout(() => setSyncStatus('idle'), 2000)
+    } catch (err) {
+      setSyncStatus('error')
+      console.error('Sync failed:', err)
+    }
   }, [project.id])
 
   // ── Handle Mode Toggle ───────────────────────────────────────────────────
@@ -171,18 +180,37 @@ const StudyMode = ({ project, onBack }) => {
           <ArrowLeftIcon className="w-4 h-4" /> Thoát
         </button>
 
+        {/* Cloud Sync Badge */}
+        <div className="flex items-center gap-1.5">
+          {syncStatus === 'saving' && (
+            <span className="flex items-center gap-1 text-[10px] font-black text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">
+              <ArrowPathIcon className="w-3 h-3 animate-spin" /> Đang lưu...
+            </span>
+          )}
+          {syncStatus === 'saved' && (
+            <span className="flex items-center gap-1 text-[10px] font-black text-green-600 bg-green-50 px-2 py-1 rounded-lg">
+              ✅ Đã lưu Cloud
+            </span>
+          )}
+          {syncStatus === 'error' && (
+            <span className="flex items-center gap-1 text-[10px] font-black text-red-500 bg-red-50 px-2 py-1 rounded-lg">
+              ⚠️ Lỗi lưu Cloud
+            </span>
+          )}
+        </div>
+
         <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
           <button 
             onClick={() => setTestMode(false)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${!testMode ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
           >
-            <AcademicCapIcon className="w-3.5 h-3.5" /> HỌC (Thứ tự gốc)
+            <AcademicCapIcon className="w-3.5 h-3.5" /> HỌC
           </button>
           <button 
             onClick={toggleTestMode}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${testMode ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
           >
-            <PlayIcon className="w-3.5 h-3.5" /> KIỂM TRA (Xáo)
+            <PlayIcon className="w-3.5 h-3.5" /> KIỂM TRA
           </button>
         </div>
       </div>
