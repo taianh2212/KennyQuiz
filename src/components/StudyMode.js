@@ -1,8 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   ArrowLeftIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   ArrowPathIcon,
   HomeIcon,
   SparklesIcon,
@@ -11,6 +9,8 @@ import {
   AcademicCapIcon,
 } from '@heroicons/react/24/outline'
 import { saveProgress, getProgress } from '../utils/supabaseService'
+import Fireworks from './Fireworks'
+import { getRandomSound } from '../config/sounds'
 
 const shuffleArray = (array) => {
   const arr = [...array]
@@ -21,7 +21,8 @@ const shuffleArray = (array) => {
   return arr
 }
 
-const ANSWER_DELAY = 1000 
+const ANSWER_DELAY = 1200
+const FIREWORKS_DURATION = 8000
 
 const StudyMode = ({ project, onBack }) => {
   const [testMode, setTestMode] = useState(false)
@@ -31,7 +32,13 @@ const StudyMode = ({ project, onBack }) => {
   const [showFinalResult, setShowFinalResult] = useState(false)
   const [timerId, setTimerId] = useState(null)
   const [loadingProgress, setLoadingProgress] = useState(true)
-  const [syncStatus, setSyncStatus] = useState('idle') // 'idle' | 'saving' | 'saved' | 'error'
+  const [syncStatus, setSyncStatus] = useState('idle')
+  const [showFireworks, setShowFireworks] = useState(false)
+  const [musicEnabled, setMusicEnabled] = useState(
+    () => localStorage.getItem('kennyquiz_music') !== 'off'
+  )
+  const audioRef = useRef(null)
+  const fireworksTimerRef = useRef(null)
 
   // ── Load Progress ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -96,14 +103,58 @@ const StudyMode = ({ project, onBack }) => {
   const currentAnswered = currentCard ? answeredMap[currentCard.id] : null
   const correctCount = Object.values(answeredMap).filter(a => a.isCorrect).length
 
+  const stopEffect = () => {
+    // Dừng âm thanh
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+    }
+    // Tắt pháo hoa
+    clearTimeout(fireworksTimerRef.current)
+    setShowFireworks(false)
+  }
+
   const handleAnswer = (selected) => {
     if (!currentCard || currentAnswered) return
+
+    // Dừng hiệu ứng từ câu trước (nếu đang chạy)
+    stopEffect()
+
     const isCorrect = selected === currentCard.answer
     const newMap = { ...answeredMap, [currentCard.id]: { isCorrect, selected } }
     setAnsweredMap(newMap)
-    
-    // Sync to Cloud
     syncProgress(currentIndex, newMap)
+
+    // 🎉 Pháo hoa + âm thanh khi trả lời ĐÚNG
+    if (isCorrect) {
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current.src = ''
+        audioRef.current = null
+      }
+      clearTimeout(fireworksTimerRef.current)
+      setShowFireworks(true)
+
+      if (musicEnabled) {
+        try {
+          const soundPath = getRandomSound()
+          if (soundPath) {
+            const audio = new Audio(soundPath)
+            audio.volume = 0.8
+            audio.play().catch(() => {})
+            audioRef.current = audio
+          }
+        } catch {}
+      }
+
+      fireworksTimerRef.current = setTimeout(() => {
+        setShowFireworks(false)
+        if (audioRef.current) {
+          audioRef.current.pause()
+          audioRef.current = null
+        }
+      }, FIREWORKS_DURATION)
+    }
 
     const tid = setTimeout(() => {
       if (currentIndex + 1 < cards.length) {
@@ -119,6 +170,10 @@ const StudyMode = ({ project, onBack }) => {
 
   const handleRedoCurrent = () => {
     if (!currentCard) return
+    // Hủy timer tự-chuyển-câu từ lần trả lời sai trước
+    clearTimeout(timerId)
+    // Dừng âm thanh/pháo hoa nếu đang chạy
+    stopEffect()
     const newMap = { ...answeredMap }
     delete newMap[currentCard.id]
     setAnsweredMap(newMap)
@@ -189,13 +244,16 @@ const StudyMode = ({ project, onBack }) => {
 
   return (
     <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6 pb-12 px-1">
+      {/* 🎉 Pháo hoa overlay */}
+      <Fireworks active={showFireworks} duration={FIREWORKS_DURATION} />
+
       <div className="flex items-center justify-between px-2">
         <button onClick={onBack} className="flex items-center gap-1.5 text-slate-400 hover:text-slate-600 font-bold text-sm">
           <ArrowLeftIcon className="w-4 h-4" /> Thoát
         </button>
 
-        {/* Cloud Sync Badge */}
-        <div className="flex items-center gap-1.5">
+        {/* Cloud Sync Badge + Music Toggle */}
+        <div className="flex items-center gap-2">
           {syncStatus === 'saving' && (
             <span className="flex items-center gap-1 text-[10px] font-black text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">
               <ArrowPathIcon className="w-3 h-3 animate-spin" /> Đang lưu...
@@ -211,6 +269,28 @@ const StudyMode = ({ project, onBack }) => {
               ⚠️ Lỗi lưu Cloud
             </span>
           )}
+
+          {/* Nút tắt/bật nhạc */}
+          <button
+            onClick={() => {
+              const next = !musicEnabled
+              setMusicEnabled(next)
+              localStorage.setItem('kennyquiz_music', next ? 'on' : 'off')
+              if (!next && audioRef.current) {
+                audioRef.current.pause()
+                audioRef.current = null
+                setShowFireworks(false)
+              }
+            }}
+            title={musicEnabled ? 'Tắt nhạc' : 'Bật nhạc'}
+            className={`flex items-center justify-center w-8 h-8 rounded-xl text-base transition-all border-2 ${
+              musicEnabled
+                ? 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-red-50 hover:border-red-200 hover:text-red-500'
+                : 'bg-slate-100 border-slate-200 text-slate-400 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600'
+            }`}
+          >
+            {musicEnabled ? '🔊' : '🔇'}
+          </button>
         </div>
 
         <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
